@@ -1,0 +1,240 @@
+---
+
+name: Build
+
+on:
+  push:
+    branches:
+      - 'master'
+  workflow_dispatch:
+  schedule:
+    # let's check for new versions every day at 01:23 AM
+    - cron: '01 23 * * *'
+
+env:
+  FIRST_COMMIT_REFLECT_VERSION: '059785f'
+  REGISTRY_URL: 'docker.io/'
+  IMAGE_NAME: '___repo/containername'
+  VERSION_REGEX: 's/^v?(.*)$/\1/g'
+
+jobs:
+
+  merge_master:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout this repository"
+        uses: "actions/checkout@v4"
+        with:
+          ref:  "build"
+          path: "./"
+          fetch-depth: '0'
+
+      - name: "Import GPG key from secrets"
+        uses: "crazy-max/ghaction-import-gpg@v5"
+        with:
+          gpg_private_key:     "${{ secrets.GPG_PRIVATE_KEY }}"
+          passphrase:          "${{ secrets.GPG_PASS }}"
+          git_user_signingkey: true
+          git_commit_gpgsign:  true
+          workdir:             "./"
+
+      - name: "Update `build` branch with master branch and determine if commit is necessary"
+        id: prepare_merge
+        run: |
+          set -eu -o pipefail
+          git config --global merge.ignore.driver true
+          gitRef1=$( git rev-parse --short HEAD )
+          git merge -s recursive origin/master
+          gitRef2=$( git rev-parse --short HEAD )
+          if [ "${gitRef1}" = "${gitRef2}" ]; then
+            echo "skipping push of non-existent merge"
+          else
+            echo "push merge"
+            git push
+          fi
+
+  gather_versions_to_build:
+
+    runs-on: ubuntu-latest
+    needs:
+      - "merge_main"
+
+    outputs:
+      tags: "${{ steps.version_tags.outputs.tags }}"
+      tagCount: "${{ steps.version_tags.outputs.tagCount }}"
+
+    steps:
+      - name: "Checkout our build repo"
+        uses: "actions/checkout@v4"
+        with:
+          ref: "build"
+          path: "./"
+
+      - name: "Checkout app repo"
+        uses: "actions/checkout@v4"
+        with:
+          repository: "___github/gitproject"
+          path: "./app"
+
+      - name: "prepare versions from tags"
+        run: |
+          set -eu -o pipefail
+          cd ./app
+          git fetch --all --tags
+
+      - name: "get actual app tags"
+        id: "version_tags"
+        run: |
+          set -eu -o pipefail
+          ###
+          ## fetch all tags that should be reflected in the version build process
+          ###
+          tags_reflected=$( cd ./app && git tag --contains \
+            "${{ env.FIRST_COMMIT_REFLECT_VERSION }}" )
+          ###
+          ## clean list from skipped version tags
+          ###
+          for regex in $( cat skip_versions.json | jq -r .[] ); do
+            tags_reflected=$( echo "${tags_reflected}" | grep -v -E "${regex}" )
+          done
+          ###
+          ## get latest version
+          ###
+          versionTags=$( echo "${tags_reflected}" | sed -E '/^v?[0-9]+\.[0-9]+\.[0-9]+$/!d' | uniq )
+          versionHelper=$( echo "${versionTags}" | sed -E '${{ env.VERSION_REGEX }}' \
+            | sort --version-sort )
+          latest=$( echo "${versionTags}" | grep "$( echo "${versionHelper}" | tail -n 1 )" )
+          ###
+          ## get all tags to build
+          ###
+          built_tags="$(
+            cat ./built_versions.json |
+            jq 'keys | { "built": . }'
+          )"
+          tags_json="$(
+            jq --raw-input --slurp 'split("\n") | .[0:-1] | { "all" : . }' \
+              <<< $( echo "${tags_reflected}" )
+          )"
+          if ( \
+            [ "${{ github.event_name }}" = "workflow_dispatch" ]
+          ); then
+            echo "This workflow runs on behalf of a manual trigger."
+            echo "For that we'll rebuild at least the latest version."
+            latest="[ \"${latest}\" ]"
+          else
+            latest="[]"
+          fi
+          tags_json="$( echo "${tags_json}" |
+            jq --argjson builtJson "${built_tags}" '. + $builtJson' |
+            jq '. as $d | .all | del( .[ indices($d.built[])[] ] )' |
+            jq --argjson latest "${latest}" '. + $latest' |
+            jq -c '{ "tags": . | unique }'
+          )"
+          ###
+          ## print debugging information to log
+          ###
+          echo "Tags being built:"
+          echo "${tags_json}"
+          # use github workflow output to transfer information
+          echo "tags=${tags_json}" >> $GITHUB_OUTPUT
+          echo "tagCount=$( echo "${tags_json}" | jq '.tags | length' )" >> $GITHUB_OUTPUT
+
+
+  build_missing_images:
+    needs: "gather_versions_to_build"
+    runs-on: ubuntu-latest
+
+    if: ${{ needs.gather_versions_to_build.outputs.tagCount != '0' }}
+
+    strategy:
+      fail-fast: false
+      matrix: "${{ fromJSON( needs.gather_versions_to_build.outputs.tags ) }}"
+
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: "build"
+
+      - name: set versions
+        run: |
+          set -eu -o pipefail
+          echo "APP_VERSION=$( echo "${{ matrix.tags }}" \
+            | sed -E '${{ env.VERSION_REGEX }}' )" >> $GITHUB_ENV
+          git_ref="$( git rev-parse --short HEAD ).$( date -u +%Y%m%d.%H%M%S )"
+          echo "IMAGE_TAG=${{ matrix.tags }}-${git_ref}" >> $GITHUB_ENV
+
+      - name: Set up QEMU for arm64 support
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to our own container registry
+        uses: docker/login-action@v2
+        with:
+          registry: "${{ env.REGISTRY_URL }}"
+          username: "${{ secrets.DOCKERHUB_USER }}"
+          password: "${{ secrets.DOCKERHUB_TOKEN }}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: "${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+
+
+  documentation:
+
+    needs:
+      - "gather_versions_to_build"
+      - "build_missing_images"
+    runs-on: "ubuntu-latest"
+
+    if: ${{ needs.gather_versions_to_build.outputs.tagCount != '0' }}
+
+    steps:
+
+      - name: "Checkout this repository"
+        uses: "actions/checkout@v4"
+        with:
+          ref: "build"
+          path: "./"
+
+      - name: "Import GPG key from secrets"
+        uses: "crazy-max/ghaction-import-gpg@v5"
+        with:
+          gpg_private_key: "${{ secrets.GPG_PRIVATE_KEY }}"
+          passphrase: "${{ secrets.GPG_PASS }}"
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          workdir: "./"
+
+      - name: "Add build date to JSON"
+        run: |
+          set -eu -o pipefail
+          dt=$( date '+%Y-%m-%d %H:%M (%Z)' )
+          fileName="./built_versions.json"
+          tagList=$( echo '${{ needs.gather_versions_to_build.outputs.tags }}' \
+            | jq -r '.tags[]' )
+          IFS=$'\n'
+          for tag in $( echo "${tagList}" ); do
+            echo "$( cat "${fileName}" \
+              | jq -S --arg key "${tag}" --arg val "${dt}" '.[ $key ] = $val' )" \
+              > "${fileName}"
+          done
+
+      - name: "Commit last built information"
+        uses: "stefanzweifel/git-auto-commit-action@v4"
+        with:
+          commit_message:    "Last built tags"
+          commit_user_name:  "GitHub Actions"
+          commit_user_email: "github.actions@macwinnie.me"
+          repository:        "./"
