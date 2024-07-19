@@ -14,7 +14,7 @@ on:
 env:
   FIRST_COMMIT_REFLECT_VERSION: '059785f'
   REGISTRY_URL: 'docker.io/'
-  IMAGE_NAME: '___repo/containername'
+  IMAGE_NAME: 'devopsansiblede/libsql-studio'
   VERSION_REGEX: 's/^v?(.*)$/\1/g'
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
       - name: "Checkout app repo"
         uses: "actions/checkout@v4"
         with:
-          repository: "___github/gitproject"
+          repository: "invisal/libsql-studio"
           path: "./app"
 
       - name: "prepare versions from tags"
