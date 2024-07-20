@@ -9,10 +9,15 @@ if [ "$( id -u )" -ne "$( id -u "${APP_USER}" )" ]; then
     exit 1
 fi
 
-# install actual version of application
+# clone app git repo
 git clone https://github.com/invisal/libsql-studio.git "${APP_ROOT}"
 cd "${APP_ROOT}"
+# checkout actual version of application
 git checkout "${APP_VERSION}"
+# remove `.git` folder so the only installed thing is the actual version
+rm -rf .git
+
+# run the actual installation of the app
 pnpm install
 npm install codemirror/view
 pnpm build
