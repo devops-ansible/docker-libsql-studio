@@ -16,12 +16,5 @@ USER ${APP_USER}
 WORKDIR ${APP_ROOT}
 EXPOSE 3000
 
-# RUN npm install -g pnpm && \
-#     git clone https://github.com/invisal/libsql-studio.git ./ && \
-#     pnpm install && \
-#     npm install codemirror/view && \
-#     pnpm build
-#
-# ENTRYPOINT ["entrypoint"]
-
+ENTRYPOINT ["entrypoint"]
 CMD ["pnpm", "start", "--hostname=0.0.0.0"]

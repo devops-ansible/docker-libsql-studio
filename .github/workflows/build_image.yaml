@@ -58,7 +58,7 @@ jobs:
 
     runs-on: ubuntu-latest
     needs:
-      - "merge_main"
+      - "merge_master"
 
     outputs:
       tags: "${{ steps.version_tags.outputs.tags }}"
@@ -160,8 +160,7 @@ jobs:
       - name: set versions
         run: |
           set -eu -o pipefail
-          echo "APP_VERSION=$( echo "${{ matrix.tags }}" \
-            | sed -E '${{ env.VERSION_REGEX }}' )" >> $GITHUB_ENV
+          echo "APP_VERSION=$( echo "${{ matrix.tags }}" )" >> $GITHUB_ENV
           git_ref="$( git rev-parse --short HEAD ).$( date -u +%Y%m%d.%H%M%S )"
           echo "IMAGE_TAG=${{ matrix.tags }}-${git_ref}" >> $GITHUB_ENV
 
