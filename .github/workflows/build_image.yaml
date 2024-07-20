@@ -63,6 +63,7 @@ jobs:
     outputs:
       tags: "${{ steps.version_tags.outputs.tags }}"
       tagCount: "${{ steps.version_tags.outputs.tagCount }}"
+      retagging: "${{ steps.version_tags.outputs.retagging }}"
 
     steps:
       - name: "Checkout our build repo"
@@ -131,14 +132,44 @@ jobs:
             jq --argjson latest "${latest}" '. + $latest' |
             jq -c '{ "tags": . | unique }'
           )"
+          # get all tags that should be retagged
+          version_retagging=$(
+              jq --null-input --arg latest "${latest}" '{ "latest": $latest }'
+          )
+          v2=$( echo "${versionHelper}" | sed -E 's/^v?([0-9]+\.[0-9]+)\.[0-9]+$/\1/g' | uniq )
+          IFS=$'\n'
+          for v in ${v2}; do
+              vv=$( echo "${versionHelper}" | grep "${v}" | tail -n 1 )
+              if [ ! -z "${vv}" ]; then
+                  version_retagging=$(
+                      echo "${version_retagging}" |
+                      jq --arg key "v${v}" --arg val "$( echo "${versionTags}" | grep "${vv}" )" '.[$key] = $val'
+                  )
+              fi
+          done
+          v1=$( echo "${versionHelper}" | sed -E 's/^v?([0-9]+)\.[0-9]+\.[0-9]+$/\1/g' | uniq )
+          for v in ${v1}; do
+              vv=$( echo "${versionHelper}" | grep "${v}" | tail -n 1 )
+              if [ ! -z "${vv}" ]; then
+                  version_retagging=$(
+                      echo "${version_retagging}" |
+                      jq --arg key "v${v}" --arg val "$( echo "${versionTags}" | grep "${vv}" )" '.[$key] = $val'
+                  )
+              fi
+          done
+          version_retagging=$( echo "${version_retagging}" | jq -c '.' )
           ###
           ## print debugging information to log
           ###
           echo "Tags being built:"
           echo "${tags_json}"
+          echo
+          echo "Tags potentially being retagged:"
+          echo "${version_retagging}"
           # use github workflow output to transfer information
           echo "tags=${tags_json}" >> $GITHUB_OUTPUT
           echo "tagCount=$( echo "${tags_json}" | jq '.tags | length' )" >> $GITHUB_OUTPUT
+          echo "retagging=${version_retagging}" >> $GITHUB_OUTPUT
 
 
   build_missing_images:
@@ -161,8 +192,7 @@ jobs:
         run: |
           set -eu -o pipefail
           echo "APP_VERSION=$( echo "${{ matrix.tags }}" )" >> $GITHUB_ENV
-          git_ref="$( git rev-parse --short HEAD ).$( date -u +%Y%m%d.%H%M%S )"
-          echo "IMAGE_TAG=${{ matrix.tags }}-${git_ref}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ matrix.tags }}" >> $GITHUB_ENV
 
       - name: Set up QEMU for arm64 support
         uses: docker/setup-qemu-action@v3
@@ -188,6 +218,46 @@ jobs:
           tags: "${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           build-args: |
             APP_VERSION=${{ env.APP_VERSION }}
+
+      - name: "prepare alternative tags if applicable"
+        id: "alt_tags"
+        run: |
+          # fetch all alternative tags
+          alternativeTags=$(
+            echo '${{ needs.gather_versions_to_build.outputs.retagging }}' |
+            jq 'keys[] as $k | if ( .[$k] == "${{ matrix.tags }}" ) then [ $k ] else   empty end' |
+            jq -s add
+          )
+          retag=''
+          if [[ $( echo "${alternativeTags}" | jq 'length' ) -gt 0 ]]; then
+            echo "Tag “${{ matrix.tags }}” will also be pushed as those tags:"
+            alternativeTags=$(
+              echo "${alternativeTags}" |
+              jq -r '.[]'
+            )
+            IFS=$'\n'
+            for tag in $( echo "${alternativeTags}" ); do
+              echo "  ◆ ${tag}"
+              if [ -z "${retag}" ]; then
+                retag="${{ env.REGISTRY_URL }}${{ env.IMAGE_NAME }}:${tag}"
+              else
+                retag="${retag}"$'\n'"${{ env.REGISTRY_URL }}${{ env.IMAGE_NAME }}:${tag}"
+              fi
+            done
+          else
+            echo 'No alternative tags to push for tag “${{ matrix.tags }}”'
+          fi
+          echo 'retag<<EOD' >> $GITHUB_OUTPUT
+          echo "${retag}" >> $GITHUB_OUTPUT
+          echo 'EOD' >> $GITHUB_OUTPUT
+
+      - name: "Push re-tagged images "
+        uses: "akhilerm/tag-push-action@v2.1.0"
+        with:
+          src: "${{ env.REGISTRY_URL }}${{ env.IMAGE_NAME }}:${{ matrix.tags }}"
+          dst: |
+            ${{ steps.alt_tags.outputs.retag }}
+        if: "${{ steps.alt_tags.outputs.retag != '' }}"
 
 
   documentation:
