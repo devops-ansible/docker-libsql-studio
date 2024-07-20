@@ -22,6 +22,10 @@ useradd --system --shell "/bin/bash" --home-dir "${APP_ROOT}" "${APP_USER}"
 # ensure CAs installed
 update-ca-certificates
 
+# make empty app / user home directory
+mkdir "${APP_ROOT}"
+chown -R "${APP_USER}" "${APP_ROOT}"
+
 # call user specific setup
 su "${APP_USER}" "$( pwd )/userinstall.sh"
 
