@@ -22,6 +22,13 @@ useradd --system --shell "/bin/bash" --home-dir "${APP_ROOT}" "${APP_USER}"
 # ensure CAs installed
 update-ca-certificates
 
+# make empty app / user home directory
+mkdir "${APP_ROOT}"
+chown -R "${APP_USER}" "${APP_ROOT}"
+
+# install pnpm globally needed for application setup
+npm install -g pnpm
+
 # call user specific setup
 su "${APP_USER}" "$( pwd )/userinstall.sh"
 

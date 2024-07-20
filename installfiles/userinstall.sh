@@ -9,9 +9,6 @@ if [ "$( id -u )" -ne "$( id -u "${APP_USER}" )" ]; then
     exit 1
 fi
 
-# install pnpm
-npm install -g pnpm
-
 # install actual version of application
 git clone https://github.com/invisal/libsql-studio.git "${APP_ROOT}"
 cd "${APP_ROOT}"
