@@ -26,6 +26,9 @@ update-ca-certificates
 mkdir "${APP_ROOT}"
 chown -R "${APP_USER}" "${APP_ROOT}"
 
+# install pnpm globally needed for application setup
+npm install -g pnpm
+
 # call user specific setup
 su "${APP_USER}" "$( pwd )/userinstall.sh"
 
