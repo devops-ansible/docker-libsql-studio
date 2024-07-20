@@ -117,12 +117,19 @@ jobs:
             jq --raw-input --slurp 'split("\n") | .[0:-1] | { "all" : . }' \
               <<< $( echo "${tags_reflected}" )
           )"
-          # latest will always be re-built when workflow runs
-          latest="${latest}"
+          if ( \
+            [ "${{ github.event_name }}" = "workflow_dispatch" ]
+          ); then
+            echo "This workflow runs on behalf of a manual trigger."
+            echo "For that we'll rebuild at least the latest version."
+            latestX="${latest}"
+          else
+            latestX="[]"
+          fi
           tags_json="$( echo "${tags_json}" |
             jq --argjson builtJson "${built_tags}" '. + $builtJson' |
             jq '. as $d | .all | del( .[ indices($d.built[])[] ] )' |
-            jq --argjson latest "${latest}" '. + $latest' |
+            jq --argjson latest "${latestX}" '. + $latest' |
             jq -c '{ "tags": . | unique }'
           )"
           # get all tags that should be retagged
