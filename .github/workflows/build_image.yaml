@@ -122,14 +122,14 @@ jobs:
           ); then
             echo "This workflow runs on behalf of a manual trigger."
             echo "For that we'll rebuild at least the latest version."
-            latest="[ \"${latest}\" ]"
+            latestX="${latest}"
           else
-            latest="[]"
+            latestX="[]"
           fi
           tags_json="$( echo "${tags_json}" |
             jq --argjson builtJson "${built_tags}" '. + $builtJson' |
             jq '. as $d | .all | del( .[ indices($d.built[])[] ] )' |
-            jq --argjson latest "${latest}" '. + $latest' |
+            jq --argjson latest "${latestX}" '. + $latest' |
             jq -c '{ "tags": . | unique }'
           )"
           # get all tags that should be retagged
@@ -239,9 +239,9 @@ jobs:
             for tag in $( echo "${alternativeTags}" ); do
               echo "  ◆ ${tag}"
               if [ -z "${retag}" ]; then
-                retag="${{ env.REGISTRY_URL }}${{ env.IMAGE_NAME }}:${tag}"
+                retag="${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${tag}"
               else
-                retag="${retag}"$'\n'"${{ env.REGISTRY_URL }}${{ env.IMAGE_NAME }}:${tag}"
+                retag="${retag}"$'\n'"${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${tag}"
               fi
             done
           else
@@ -254,7 +254,7 @@ jobs:
       - name: "Push re-tagged images "
         uses: "akhilerm/tag-push-action@v2.1.0"
         with:
-          src: "${{ env.REGISTRY_URL }}${{ env.IMAGE_NAME }}:${{ matrix.tags }}"
+          src: "${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ matrix.tags }}"
           dst: |
             ${{ steps.alt_tags.outputs.retag }}
         if: "${{ steps.alt_tags.outputs.retag != '' }}"
